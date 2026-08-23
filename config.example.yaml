@@ -1,0 +1,93 @@
+# doc-classifier-cli - contoh konfigurasi.
+# Salin file ini menjadi "config.yaml" di folder proyek lalu sesuaikan,
+# atau biarkan aplikasi membuat config otomatis di ~/.doc-classifier/config.yaml.
+
+classification:
+  default_model: ollama/llama3:8b   # model Ollama lokal (privacy-first)
+  max_chars: 2000                   # jumlah karakter awal yang dikirim ke AI
+  temperature: 0.1
+  fallback_keywords: true           # jika AI tidak tersedia, pakai keyword taxonomy
+
+paths:
+  # Folder sumber dokumen berantakan (contoh: Downloads).
+  source_dir: C:\Users\NAMA_ANDA\Downloads
+  # Folder tujuan arsip rapi.
+  output_dir: C:\Users\NAMA_ANDA\Documents\ArsipDokumen
+
+taxonomy:
+  Keuangan:
+    keywords:
+    - invoice
+    - faktur
+    - kwitansi
+    - laporan keuangan
+    - anggaran
+    - budget
+    folder: 01_Keuangan
+  Surat_Menyurat:
+    keywords:
+    - surat
+    - memo
+    - nota dinas
+    - undangan
+    - pengumuman
+    folder: 02_Surat_Menyurat
+  Laporan:
+    keywords:
+    - laporan
+    - report
+    - evaluasi
+    - monitoring
+    - progress
+    folder: 03_Laporan
+  Kontrak:
+    keywords:
+    - kontrak
+    - perjanjian
+    - MoU
+    - agreement
+    - addendum
+    folder: 04_Kontrak
+  SDM:
+    keywords:
+    - CV
+    - resume
+    - SK
+    - absensi
+    - cuti
+    - payroll
+    folder: 05_SDM
+  Penelitian:
+    keywords:
+    - jurnal
+    - paper
+    - skripsi
+    - tesis
+    - disertasi
+    - research
+    folder: 06_Penelitian
+  Teknis:
+    keywords:
+    - SOP
+    - manual
+    - prosedur
+    - spesifikasi
+    - blueprint
+    folder: 07_Teknis
+  Legal:
+    keywords:
+    - hukum
+    - peraturan
+    - undang-undang
+    - regulasi
+    - legal
+    folder: 08_Legal
+  Lainnya:
+    keywords: []
+    folder: 09_Lainnya
+
+file_naming:
+  pattern: '{date}_{title}_{type}'
+  date_format: '%Y-%m-%d'
+  max_length: 120
+  sanitize_chars: true

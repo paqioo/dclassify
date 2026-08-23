@@ -1,0 +1,25 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Data pribadi & hasil klasifikasi - JANGAN dipublish
+config.yaml
+.doc_classifier_history.json
+01_Keuangan/
+02_Surat_Menyurat/
+03_Laporan/
+04_Kontrak/
+05_SDM/
+06_Penelitian/
+07_Teknis/
+08_Legal/
+09_Lainnya/
+
+# Catatan sesi internal
+SESSION_NOTES.md
