@@ -122,7 +122,29 @@ def _ocr_pdf_fallback(file_path: Path) -> str:
     try:
         import pytesseract
         images = _render_pdf_pages(file_path)
-        text_parts = [pytesseract.image_to_string(img) for img in images]
+        text_parts = []
+        conf_sum = 0.0
+        conf_count = 0
+        for img in images:
+            data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+            for i, conf_str in enumerate(data["conf"]):
+                try:
+                    conf = int(conf_str)
+                    if conf > 0:
+                        conf_sum += conf
+                        conf_count += 1
+                        word = (data["text"][i] or "").strip()
+                        if word:
+                            text_parts.append(word)
+                except ValueError:
+                    pass
+        avg_conf = conf_sum / conf_count if conf_count else 0.0
+        if avg_conf < 20.0:
+            logger.info(
+                "OCR confidence %.0f%% too low for %s, fallback to filename",
+                avg_conf, file_path.name,
+            )
+            return ""
         return "\n".join(text_parts)[:MAX_CHARS]
     except Exception as exc:
         logger.warning("OCR fallback failed for %s: %s", file_path, exc)
@@ -408,16 +430,43 @@ def parse_office(file_path: Path) -> str:
     raise ValueError(f"Unsupported office extension: {ext}")
 
 
+def _ocr_image_data(file_path: Path) -> tuple[str, float]:
+    """OCR image and return (text, avg_confidence)."""
+    import pytesseract
+    from PIL import Image
+
+    img = Image.open(file_path)
+    data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+    confidences = []
+    text_parts = []
+    for i, conf_str in enumerate(data["conf"]):
+        try:
+            conf = int(conf_str)
+            if conf > 0:
+                confidences.append(conf)
+                word = (data["text"][i] or "").strip()
+                if word:
+                    text_parts.append(word)
+        except ValueError:
+            pass
+
+    text = " ".join(text_parts)
+    avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
+    return text, avg_conf
+
+
 def parse_image(file_path: Path) -> str:
     if not _configure_tesseract():
         logger.warning("Tesseract not configured - cannot OCR %s", file_path)
         return ""
     try:
-        import pytesseract
-        from PIL import Image
-
-        img = Image.open(file_path)
-        text = pytesseract.image_to_string(img)
+        text, confidence = _ocr_image_data(file_path)
+        if confidence < 20.0:
+            logger.info(
+                "OCR confidence %.0f%% too low for %s, fallback to filename",
+                confidence, file_path.name,
+            )
+            return ""
         return text.strip()[:MAX_CHARS]
     except ImportError:
         logger.warning("pytesseract/Pillow not installed - cannot OCR %s", file_path)

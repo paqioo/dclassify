@@ -14,7 +14,7 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from . import __version__
-from .ai import check_ollama_connection
+from .ai import check_ollama_connection, classify_text
 from .envcheck import ensure_ready, first_run_wizard
 from .parser import extract_text_metadata, get_supported_extensions, is_media_file
 from .rules import (
@@ -126,6 +126,12 @@ def classify(
     recursive: bool = typer.Option(
         False, "--recursive", "-r", help="Process directories recursively"
     ),
+    model: Optional[str] = typer.Option(
+        None, "--model", "-m", help="AI model for classification (e.g. ollama/qwen2.5:1.5b)"
+    ),
+    no_fallback: bool = typer.Option(
+        False, "--no-fallback", help="Skip file if AI fails instead of falling back to keyword mode"
+    ),
 ) -> None:
     exit_code = run_classify(
         path=path,
@@ -133,6 +139,8 @@ def classify(
         output_dir=output_dir,
         dry_run=dry_run,
         recursive=recursive,
+        model=model,
+        no_fallback=no_fallback,
     )
     if exit_code:
         raise typer.Exit(exit_code)
@@ -144,6 +152,8 @@ def run_classify(
     output_dir: Optional[str] = None,
     dry_run: bool = False,
     recursive: bool = False,
+    model: Optional[str] = None,
+    no_fallback: bool = False,
 ) -> int:
     config, resolved_path = _load_resolved_config(config_file)
     if resolved_path is None:
@@ -166,10 +176,14 @@ def run_classify(
         )
         return 1
 
+    mode_label = "AI CLASSIFICATION" if model else "FILE-TYPE + CONTENT NAMING"
+    fallback_label = "OFF" if no_fallback else "ON"
+    model_label = model or config.classification.default_model
     console.print(
         Panel(
             f"[bold green]doc-classifier-cli[/bold green] v{__version__}\n"
-            f"Mode: [cyan]FILE-TYPE + CONTENT NAMING[/cyan] | Dry-run: [yellow]{dry_run}[/yellow]\n"
+            f"Mode: [cyan]{mode_label}[/cyan] | Dry-run: [yellow]{dry_run}[/yellow]\n"
+            f"Model: [cyan]{model_label}[/cyan] | Fallback: [cyan]{fallback_label}[/cyan]\n"
             f"Source: [cyan]{target_path}[/cyan] | Output: [cyan]{base_output}[/cyan]",
             title="Document Classifier",
         )
@@ -239,10 +253,33 @@ def run_classify(
             progress.update(task, description=f"Processing: {file_path.name}")
             file_start = time.time()
 
-            category = classify_by_extension(file_path, config.taxonomy)
-
             title_meta, text = extract_text_metadata(file_path)
-            title = title_meta or generate_title_from_text(text, file_path.name)
+
+            if model:
+                progress.update(task, description=f"AI: {file_path.name}")
+                ai_result = classify_text(
+                    text or file_path.stem,
+                    model=model,
+                    local_only=False,
+                )
+                if ai_result:
+                    category = ai_result.main_category
+                    title = ai_result.title or (title_meta or file_path.stem)
+                else:
+                    if no_fallback:
+                        results_table.add_row(
+                            str(idx), file_path.name,
+                            "[red]SKIPPED[/red]", "-",
+                            "[red]AI FAIL + --no-fallback[/red]",
+                        )
+                        progress.advance(task)
+                        _track_folder_time(folder_times, "SKIPPED", file_start)
+                        continue
+                    category = classify_by_extension(file_path, config.taxonomy)
+                    title = title_meta or generate_title_from_text(text, file_path.name)
+            else:
+                category = classify_by_extension(file_path, config.taxonomy)
+                title = title_meta or generate_title_from_text(text, file_path.name)
 
             operation = apply_classification(
                 file_path, category, title, config, output_dir=base_output, dry_run=dry_run

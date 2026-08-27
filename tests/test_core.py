@@ -285,3 +285,18 @@ class TestFilenameFallbacks:
     def test_symbol_only_falls_back(self, sample_config):
         name = generate_target_filename("document", ".png", sample_config.file_naming)
         assert name == "document.png"
+
+
+class TestNoFallbackOption:
+    def test_run_classify_accepts_no_fallback_flag(self, sample_config, tmp_path):
+        from doc_classifier.cli import run_classify
+
+        (tmp_path / "doc.txt").write_text("Sample content", encoding="utf-8")
+        out_dir = tmp_path / "out"
+        code = run_classify(
+            path=str(tmp_path / "doc.txt"),
+            output_dir=str(out_dir),
+            dry_run=True,
+            no_fallback=True,
+        )
+        assert code == 0
