@@ -1,6 +1,6 @@
 # doc-classifier-cli
 
-A Privacy-First, Local-AI Powered CLI Tool & Web UI for Smart Document Organization.
+A Privacy-First, Local-AI Powered CLI Tool for Smart Document Organization.
 
 ## Features
 
@@ -14,7 +14,7 @@ A Privacy-First, Local-AI Powered CLI Tool & Web UI for Smart Document Organizat
 - **Full Office Support:** `.pdf`, `.docx`, `.xlsx`, `.csv`, `.ods`, `.odt`, `.pptx`, `.ppt`, `.txt`, `.tsv`
 - **Safe Operations:** Dry-run mode (`--dry-run`) and full undo support (`dclassify undo --all`)
 - **Scanner Module:** Analyze a folder dataset with `dclassify scan`, export JSON/CSV reports
-- **Dual Interface:** CLI (`dclassify` + rich interactive menu) and Web UI (Streamlit)
+- **Dual Interface:** CLI (`dclassify` + rich interactive menu)
 
 ## Installation
 
@@ -90,12 +90,6 @@ dclassify scan ./documents/
 
 # Export report to JSON/CSV
 dclassify scan ./documents/ --output-report report.json --output-csv report.csv
-```
-
-### Web UI
-
-```bash
-streamlit run src/doc_classifier/web.py
 ```
 
 ## Requirements
