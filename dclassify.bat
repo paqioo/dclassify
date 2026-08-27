@@ -65,6 +65,5 @@ echo.
 echo ==============================================
 echo   Setup complete! From now on just double-click:
 echo     - organize.bat      ^(auto-organize files^)
-echo     - webui.bat         ^(open Web UI^)
 echo ==============================================
 pause

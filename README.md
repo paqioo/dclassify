@@ -44,7 +44,6 @@ without your confirmation.
    installs dependencies, then launches the guided setup
 3. Daily use:
    - **`organize.bat`** - auto-organize your source folder
-   - **`webui.bat`** - open the Web UI in browser
 
 ## Quick Start
 
@@ -98,7 +97,6 @@ dclassify scan ./documents/ --output-report report.json --output-csv report.csv
 ```bash
 streamlit run src/doc_classifier/web.py
 ```
-(or menu option [5], or `webui.bat`)
 
 ## Requirements
 
