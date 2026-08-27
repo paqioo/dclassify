@@ -43,8 +43,8 @@ without your confirmation.
 2. Double-click **`dclassify.bat`** (one time only) - sets up Python env,
    installs dependencies, then launches the guided setup
 3. Daily use:
-   - **`Rapikan_Downloads.bat`** - auto-organize your source folder
-   - **`Jalankan_Web_UI.bat`** - open the Web UI in browser
+   - **`organize.bat`** - auto-organize your source folder
+   - **`webui.bat`** - open the Web UI in browser
 
 ## Quick Start
 
@@ -98,7 +98,7 @@ dclassify scan ./documents/ --output-report report.json --output-csv report.csv
 ```bash
 streamlit run src/doc_classifier/web.py
 ```
-(or menu option [5], or `Jalankan_Web_UI.bat`)
+(or menu option [5], or `webui.bat`)
 
 ## Requirements
 

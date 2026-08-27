@@ -245,7 +245,7 @@ def first_run_wizard(console: Console, home_dir=None) -> object:
 
     base_home = Path(home_dir) if home_dir else Path.home()
     default_source = str(base_home / "Downloads")
-    default_output = str(Path.home() / "Documents" / "ArsipDokumen")
+    default_output = str(Path.home() / "Documents" / "OrganizedDocs")
 
     console.print("\n[bold cyan]First-time setup detected.[/bold cyan]")
     console.print("We just need two folder paths:\n")

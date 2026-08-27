@@ -1,17 +1,17 @@
 @echo off
 cd /d "%~dp0"
-title Doc Classifier - Auto Organize
+title Doc Classifier - Auto Organizer
 setlocal
 set "PYTHONPATH=%~dp0src;%PYTHONPATH%"
 echo ==============================================
-echo   Doc Classifier v0.3.0 - File Type Organizer
-echo   (interactive menu mode)
+echo   Doc Classifier v0.3.0 - Auto Organizer
+echo   (opens interactive menu)
 echo ==============================================
 echo.
 
 if not exist "venv\Scripts\dclassify.exe" (
-    echo [ERROR] Aplikasi belum ter-setup.
-    echo Jalankan dclassify.bat terlebih dahulu, lalu ulangi file ini.
+    echo [ERROR] Application is not set up yet.
+    echo Run dclassify.bat first, then try this file again.
     pause
     exit /b 1
 )

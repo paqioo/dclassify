@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 title Doc Classifier - Web UI
 echo ==============================================
-echo   Doc Classifier v0.1.0 - Web UI
+echo   Doc Classifier v0.3.0 - Web UI
 echo ==============================================
 echo.
 
