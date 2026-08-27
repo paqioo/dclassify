@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 title Doc Classifier - Setup Awal
 echo ==============================================
-echo   Doc Classifier v0.1.0 - Setup Awal
+echo   Doc Classifier v0.3.0 - Setup Awal
 echo   (jalankan ini SEKALI setelah download/extract)
 echo ==============================================
 echo.

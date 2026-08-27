@@ -4,14 +4,14 @@ title Doc Classifier - Auto Organize
 setlocal
 set "PYTHONPATH=%~dp0src;%PYTHONPATH%"
 echo ==============================================
-echo   Doc Classifier v0.1.0 - File Type Organizer
+echo   Doc Classifier v0.3.0 - File Type Organizer
 echo   (interactive menu mode)
 echo ==============================================
 echo.
 
 if not exist "venv\Scripts\dclassify.exe" (
     echo [ERROR] Aplikasi belum ter-setup.
-    echo Jalankan Setup_Awal.bat terlebih dahulu, lalu ulangi file ini.
+    echo Jalankan dclassify.bat terlebih dahulu, lalu ulangi file ini.
     pause
     exit /b 1
 )

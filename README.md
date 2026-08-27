@@ -40,7 +40,7 @@ without your confirmation.
 ### Path B - Download repo / ZIP (beginner-friendly)
 
 1. Download & extract this repository
-2. Double-click **`Smart Document Classifier & Organizer.bat`** (one time only) - sets up Python env,
+2. Double-click **`dclassify.bat`** (one time only) - sets up Python env,
    installs dependencies, then launches the guided setup
 3. Daily use:
    - **`Rapikan_Downloads.bat`** - auto-organize your source folder
