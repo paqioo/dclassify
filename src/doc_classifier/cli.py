@@ -14,8 +14,13 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from . import __version__
-from .ai import check_ollama_connection, classify_text
-from .envcheck import ensure_ready, first_run_wizard
+from .ai import classify_text
+from .envcheck import (
+    check_model_installed,
+    check_ollama_api,
+    ensure_ready,
+    first_run_wizard,
+)
 from .parser import extract_text_metadata, get_supported_extensions, is_media_file
 from .rules import (
     GLOBAL_CONFIG_FILE,
@@ -487,14 +492,26 @@ def check() -> None:
 def _check_connection() -> int:
     config, _ = _load_resolved_config()
     model = config.classification.default_model
-    console.print(f"Checking connection to [cyan]{model}[/cyan]...")
+    bare_model = model.removeprefix("ollama/").removeprefix("ollama:")
 
-    if check_ollama_connection(model):
-        console.print("[bold green]OK![/bold green] Model is reachable.")
-        return 0
+    if not check_ollama_api():
+        console.print("[bold red]FAIL![/bold red] Ollama is not running or not installed.")
+        console.print(
+            "  → Start Ollama, or run [cyan]dclassify[/cyan] "
+            "(without arguments) for guided setup."
+        )
+        return 1
 
-    console.print("[bold red]FAIL![/bold red] Cannot reach model. Is Ollama running?")
-    return 1
+    if not check_model_installed(model):
+        console.print(
+            f"[bold red]FAIL![/bold red] Model [cyan]{bare_model}[/cyan] "
+            "is not installed."
+        )
+        console.print(f"  → Run: [cyan]ollama pull {bare_model}[/cyan]")
+        return 1
+
+    console.print("[bold green]OK![/bold green] Ollama is running and model is ready.")
+    return 0
 
 
 @app.command()

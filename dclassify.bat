@@ -53,7 +53,16 @@ if errorlevel 1 (
 echo [OK] Installation complete.
 echo.
 
-REM --- 4. Run guided setup (check Ollama / model / Tesseract) ---
+REM --- 4. Pre-pull default model if Ollama was just installed ---
+set "OLLAMA_EXE=%LOCALAPPDATA%\Programs\Ollama\ollama.exe"
+if exist "%OLLAMA_EXE%" (
+    echo.
+    echo Pre-pulling default model qwen2.5:1.5b ^(±1 GB^)...
+    "%OLLAMA_EXE%" pull qwen2.5:1.5b
+    echo.
+)
+
+REM --- 5. Run guided setup (check Ollama / model / Tesseract) ---
 echo Now checking AI readiness. Follow the on-screen prompts:
 echo - If asked to install Ollama / download a model, just press Enter or Y.
 echo - Progress is saved — you can close this window and resume later.
