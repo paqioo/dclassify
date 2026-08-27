@@ -15,6 +15,8 @@ import subprocess
 import urllib.request
 import webbrowser
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
 
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
@@ -27,6 +29,20 @@ logger = logging.getLogger(__name__)
 OLLAMA_API = "http://localhost:11434"
 OLLAMA_DOWNLOAD_URL = "https://ollama.com/download"
 TESSERACT_DOWNLOAD_URL = "https://github.com/UB-Mannheim/tesseract/wiki"
+
+OLLAMA_WIN_PATHS = [
+    Path.home() / "AppData" / "Local" / "Programs" / "Ollama" / "ollama.exe",
+]
+
+
+def _find_ollama_exe() -> Optional[str]:
+    found = shutil.which("ollama")
+    if found:
+        return found
+    for p in OLLAMA_WIN_PATHS:
+        if p.exists():
+            return str(p)
+    return None
 
 
 @dataclass
@@ -168,13 +184,28 @@ def _offer_model_pull(console: Console, status: EnvStatus) -> None:
         )
         return
 
-    console.print(f"[cyan]Running: ollama pull {bare_model} ...[/cyan]")
-    try:
-        subprocess.run(["ollama", "pull", bare_model], check=False)
-    except FileNotFoundError:
-        console.print("[red]Command 'ollama' not found in PATH.[/red]")
+    ollama_path = _find_ollama_exe()
+    if ollama_path is None:
+        console.print(
+            "[red]Ollama was installed but its executable is not in PATH.[/red]\n"
+            "[yellow]Please close this terminal window, open a new one, "
+            "then run dclassify.bat again.[/yellow]"
+        )
         return
-    console.print("[green]Done. Model is ready to use.[/green]")
+
+    console.print(f"[cyan]Running: {ollama_path} pull {bare_model} ...[/cyan]")
+    try:
+        result = subprocess.run([ollama_path, "pull", bare_model], check=False)
+        if result.returncode == 0:
+            console.print("[green]Done. Model is ready to use.[/green]")
+        else:
+            console.print(f"[red]ollama pull failed with code {result.returncode}.[/red]")
+    except FileNotFoundError:
+        console.print(
+            "[red]Ollama executable not found at the expected path.[/red]\n"
+            "[yellow]Please close this terminal, open a new one, "
+            "then run dclassify.bat again.[/yellow]"
+        )
 
 
 def _guide_tesseract(console: Console) -> None:
@@ -225,7 +256,6 @@ def run_guided_setup(console: Console, model: str) -> EnvStatus:
 def ensure_ready(console: Console, model: str) -> EnvStatus:
     """Run health check once; guide user only when something is missing."""
     status = check_environment(model)
-    render_status(console, status)
     if status.all_critical_ok:
         if not status.tesseract_found:
             console.print(
@@ -241,8 +271,6 @@ def first_run_wizard(console: Console, home_dir=None) -> object:
 
     Returns the loaded Config from the newly written file.
     """
-    from pathlib import Path
-
     base_home = Path(home_dir) if home_dir else Path.home()
     default_source = str(base_home / "Downloads")
     default_output = str(Path.home() / "Documents" / "OrganizedDocs")
