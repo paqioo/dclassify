@@ -71,7 +71,7 @@ class TaxonomyEntry(BaseModel):
 
 
 class FileNamingConfig(BaseModel):
-    pattern: str = "{date}_{title}_{type}"
+    pattern: str = "{title}"
     date_format: str = "%Y-%m-%d"
     max_length: int = 120
     sanitize_chars: bool = True

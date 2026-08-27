@@ -218,7 +218,11 @@ def generate_target_filename(
     if not safe_title or not re.search(r"[a-zA-Z0-9]", safe_title):
         safe_title = "document"
 
-    filename = naming_config.pattern.format(title=safe_title)
+    filename = naming_config.pattern.format(
+        title=safe_title,
+        date="",
+        type="",
+    )
 
     if naming_config.sanitize_chars:
         filename = sanitize_filename(filename, max_length=naming_config.max_length)
