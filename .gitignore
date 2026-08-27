@@ -11,15 +11,10 @@ dist/
 # Data pribadi & hasil klasifikasi - JANGAN dipublish
 config.yaml
 .doc_classifier_history.json
-01_Keuangan/
-02_Surat_Menyurat/
-03_Laporan/
-04_Kontrak/
-05_SDM/
-06_Penelitian/
-07_Teknis/
-08_Legal/
-09_Lainnya/
+Documents/
+Spreadsheets/
+Images/
+Audio/
 
 # Catatan sesi internal
 SESSION_NOTES.md

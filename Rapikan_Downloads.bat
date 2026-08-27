@@ -4,37 +4,26 @@ title Doc Classifier - Auto Organize
 setlocal
 set "PYTHONPATH=%~dp0src;%PYTHONPATH%"
 echo ==============================================
-echo   Doc Classifier v0.1.0 - Auto Organize
+echo   Doc Classifier v0.1.0 - File Type Organizer
+echo   (interactive menu mode)
 echo ==============================================
 echo.
 
-if not exist "venv\Scripts\python.exe" (
-    echo [ERROR] Virtual environment not found at venv\Scripts\python.exe
-    echo Please create it first, then try again.
+if not exist "venv\Scripts\dclassify.exe" (
+    echo [ERROR] Aplikasi belum ter-setup.
+    echo Jalankan Setup_Awal.bat terlebih dahulu, lalu ulangi file ini.
     pause
     exit /b 1
 )
 
-echo [1/2] Checking AI connection (Ollama)...
+echo Starting interactive menu...
 echo.
-"venv\Scripts\python.exe" -m doc_classifier.cli check
-if errorlevel 1 (
-    echo.
-    echo [IMPORTANT] AI connection check FAILED.
-    echo Please start Ollama first, then run this file again.
-    pause
-    exit /b 1
-)
-echo.
-
-echo [2/2] Classifying and organizing documents from source folder...
-echo.
-"venv\Scripts\python.exe" -m doc_classifier.cli classify
+call "venv\Scripts\dclassify.exe"
 set "EXITCODE=%ERRORLEVEL%"
 
 echo.
 if "%EXITCODE%"=="0" (
-    echo Done! Documents have been organized.
+    echo Done! Menu exited normally.
 ) else (
     echo Finished with issues - please check the output above.
 )

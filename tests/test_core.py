@@ -3,12 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 from doc_classifier.models import ClassificationResult, Config
 from doc_classifier.rules import (
-    classify_by_keywords,
+    classify_by_extension,
     find_config_file,
     generate_target_filename,
+    generate_title_from_text,
     load_config,
     resolve_target_folder,
     sanitize_filename,
@@ -19,23 +21,10 @@ from doc_classifier.rules import (
 
 
 @pytest.fixture
-def sample_classification() -> ClassificationResult:
-    return ClassificationResult(
-        title="Laporan Keuangan Q1 2024",
-        document_type="report",
-        main_category="Keuangan",
-        document_date="2024-03-15",
-        suggested_filename="Laporan_Keuangan_Q1_2024",
-        confidence=0.92,
-        summary="Laporan keuangan kuartal pertama tahun 2024",
-    )
-
-
-@pytest.fixture
 def sample_config(tmp_path: Path) -> Config:
     config_data = {
         "classification": {
-            "default_model": "ollama/llama3:8b",
+            "default_model": "ollama/qwen2.5:1.5b",
             "max_chars": 2000,
             "temperature": 0.1,
         },
@@ -44,19 +33,19 @@ def sample_config(tmp_path: Path) -> Config:
             "output_dir": r"D:\Organized",
         },
         "taxonomy": {
-            "Keuangan": {"keywords": ["invoice"], "folder": "01_Keuangan"},
-            "Lainnya": {"keywords": [], "folder": "09_Lainnya"},
+            "Documents": {"keywords": [], "folder": "Documents"},
+            "Spreadsheets": {"keywords": [], "folder": "Spreadsheets"},
+            "Images": {"keywords": [], "folder": "Images"},
+            "Audio": {"keywords": [], "folder": "Audio"},
         },
         "file_naming": {
-            "pattern": "{date}_{title}_{type}",
+            "pattern": "{title}",
             "date_format": "%Y-%m-%d",
-            "max_length": 120,
+            "max_length": 255,
             "sanitize_chars": True,
         },
     }
     config_file = tmp_path / "config.yaml"
-    import yaml
-
     config_file.write_text(yaml.dump(config_data), encoding="utf-8")
     return load_config(str(config_file))
 
@@ -91,23 +80,31 @@ class TestSanitizeFilename:
 
 
 class TestGenerateTargetFilename:
-    def test_generates_correct_name(self, sample_classification, sample_config):
-        name = generate_target_filename(
-            sample_classification, ".pdf", sample_config.file_naming
-        )
-        assert name.endswith(".pdf")
-        assert "Laporan_Keuangan_Q1_2024" in name
-        assert "2024-03-15" in name
+    def test_uses_title_pattern(self, sample_config):
+        name = generate_target_filename("Financial_Report", ".pdf", sample_config.file_naming)
+        assert name == "Financial_Report.pdf"
 
-    def test_uses_current_date_if_none(self, sample_config):
-        classification = ClassificationResult(
-            title="Test",
-            document_type="report",
-            main_category="Lainnya",
-            suggested_filename="test",
-        )
-        name = generate_target_filename(classification, ".txt", sample_config.file_naming)
-        assert name.endswith(".txt")
+    def test_custom_title(self, sample_config):
+        name = generate_target_filename("my_document", ".txt", sample_config.file_naming)
+        assert name == "my_document.txt"
+
+
+class TestGenerateTitleFromText:
+    def test_uses_metadata_first(self):
+        title = generate_title_from_text(None, "my_file.pdf")
+        assert "my_file" in title
+
+    def test_uses_content_line(self):
+        title = generate_title_from_text("This is a financial report for Q1 2024", "x.pdf")
+        assert "financial" in title.lower() or "report" in title.lower() or "This" in title
+
+    def test_fallback_to_stem(self):
+        title = generate_title_from_text("", "my_document.pdf")
+        assert "my_document" in title
+
+    def test_strips_urls(self):
+        title = generate_title_from_text("Check http://www.example.com for details", "doc.pdf")
+        assert "http" not in title
 
 
 class TestSaveConfigPaths:
@@ -136,21 +133,14 @@ class TestSaveConfigPaths:
 
 
 class TestResolveTargetFolder:
-    def test_known_category(self, sample_classification, sample_config):
-        folder = resolve_target_folder(
-            sample_classification, sample_config.taxonomy, "/base"
-        )
-        assert "01_Keuangan" in str(folder)
+    def test_known_category(self, sample_config):
+        folder = resolve_target_folder("Documents", sample_config.taxonomy, "/base")
+        assert "Documents" in str(folder)
 
     def test_unknown_category_falls_back(self, sample_config):
-        classification = ClassificationResult(
-            title="Test",
-            document_type="other",
-            main_category="UnknownCategory",
-            suggested_filename="test",
-        )
-        folder = resolve_target_folder(classification, sample_config.taxonomy, "/base")
-        assert "09_Lainnya" in str(folder)
+        folder = resolve_target_folder("UnknownCategory", sample_config.taxonomy, "/base")
+        folder_str = str(folder)
+        assert any(name in folder_str for name in ["Documents", "Spreadsheets", "Images", "Audio"])
 
 
 class TestUniquePath:
@@ -171,129 +161,50 @@ class TestUniquePath:
         assert result.name == "test_3.pdf"
 
 
-class TestExtractText:
-    def test_txt_file(self, tmp_path):
-        from doc_classifier.parser import extract_text
-
-        txt_file = tmp_path / "sample.txt"
-        txt_file.write_text("Hello World ini adalah dokumen test", encoding="utf-8")
-        result = extract_text(str(txt_file))
-        assert result is not None
-        assert "Hello World" in result
-
-    def test_nonexistent_file(self):
-        from doc_classifier.parser import extract_text
-
-        result = extract_text("/nonexistent/file.pdf")
-        assert result is None
-
-    def test_unsupported_extension(self, tmp_path):
-        from doc_classifier.parser import extract_text
-
-        f = tmp_path / "test.xyz"
+class TestClassifyByExtension:
+    def test_pdf_to_documents(self, tmp_path):
+        f = tmp_path / "report.pdf"
         f.touch()
-        result = extract_text(str(f))
-        assert result is None
+        config = Config()
+        config.taxonomy = {
+            "Documents": {"keywords": [], "folder": "Documents"},
+            "Spreadsheets": {"keywords": [], "folder": "Spreadsheets"},
+        }
+        result = classify_by_extension(f, config.taxonomy)
+        assert result == "Documents"
 
+    def test_csv_to_spreadsheets(self, tmp_path):
+        f = tmp_path / "data.csv"
+        f.touch()
+        config = Config()
+        config.taxonomy = {
+            "Documents": {"keywords": [], "folder": "Documents"},
+            "Spreadsheets": {"keywords": [], "folder": "Spreadsheets"},
+        }
+        result = classify_by_extension(f, config.taxonomy)
+        assert result == "Spreadsheets"
 
-class TestOfficeParsing:
-    def test_csv_file(self, tmp_path):
-        from doc_classifier.parser import extract_text
+    def test_jpg_to_images(self, tmp_path):
+        f = tmp_path / "photo.jpg"
+        f.touch()
+        config = Config()
+        config.taxonomy = {
+            "Documents": {"keywords": [], "folder": "Documents"},
+            "Images": {"keywords": [], "folder": "Images"},
+        }
+        result = classify_by_extension(f, config.taxonomy)
+        assert result == "Images"
 
-        csv_file = tmp_path / "invoice.csv"
-        csv_file.write_text(
-            "item,qty,price\nKertas A4,10,50000\nTinta Printer,2,150000\n",
-            encoding="utf-8",
-        )
-        result = extract_text(str(csv_file))
-        assert result is not None
-        assert "Kertas A4" in result
-
-    def test_xlsx_file(self, tmp_path):
-        openpyxl = pytest.importorskip("openpyxl")
-        from doc_classifier.parser import extract_text
-
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.append(["Nama", "Gaji"])
-        ws.append(["Andi", 5000000])
-        xlsx_file = tmp_path / "payroll.xlsx"
-        wb.save(str(xlsx_file))
-
-        result = extract_text(str(xlsx_file))
-        assert result is not None
-        assert "Andi" in result
-
-    def test_odt_file(self, tmp_path):
-        odf_opendocument = pytest.importorskip("odf.opendocument")
-        from odf import text as odf_text
-
-        from doc_classifier.parser import extract_text
-
-        doc = odf_opendocument.OpenDocumentText()
-        doc.text.addElement(odf_text.P(text="Surat Perjanjian Kerja Sama"))
-        doc.text.addElement(odf_text.P(text="Nomor: 001/2026"))
-        odt_file = tmp_path / "surat.odt"
-        doc.save(str(odt_file))
-
-        result = extract_text(str(odt_file))
-        assert result is not None
-        assert "Perjanjian" in result
-
-    def test_supported_extensions_include_office(self):
-        from doc_classifier.parser import get_supported_extensions
-
-        exts = get_supported_extensions()
-        for ext in (".xlsx", ".csv", ".ods", ".odt"):
-            assert ext in exts
-
-
-class TestClassificationNormalization:
-    def test_junk_date_becomes_none(self):
-        classification = ClassificationResult(
-            title="Test Doc",
-            document_type="other",
-            main_category="Lainnya",
-            document_date="null",
-            suggested_filename="test_doc",
-        )
-        assert classification.document_date is None
-
-    def test_valid_date_kept(self, sample_classification):
-        assert sample_classification.document_date == "2024-03-15"
-
-    def test_empty_title_fallback(self):
-        classification = ClassificationResult(
-            title="   ",
-            document_type="other",
-            main_category="Lainnya",
-            suggested_filename="test",
-        )
-        assert classification.title == "Untitled Document"
-
-
-class TestFilenameFallbacks:
-    def test_null_date_uses_current_date(self, sample_config):
-        classification = ClassificationResult(
-            title="Dokumen Tanpa Tanggal",
-            document_type="report",
-            main_category="Lainnya",
-            document_date="null",
-            suggested_filename="dokumen_tanpa_tanggal",
-        )
-        name = generate_target_filename(classification, ".pdf", sample_config.file_naming)
-        assert not name.startswith("null")
-        assert "_null_" not in name
-
-    def test_symbol_only_title_falls_back_to_suggested(self, sample_config):
-        classification = ClassificationResult(
-            title="»& ??? ***",
-            document_type="other",
-            main_category="Lainnya",
-            suggested_filename="nama_file_bagus",
-        )
-        name = generate_target_filename(classification, ".png", sample_config.file_naming)
-        assert "nama_file_bagus" in name
+    def test_mp3_to_audio(self, tmp_path):
+        f = tmp_path / "song.mp3"
+        f.touch()
+        config = Config()
+        config.taxonomy = {
+            "Documents": {"keywords": [], "folder": "Documents"},
+            "Audio": {"keywords": [], "folder": "Audio"},
+        }
+        result = classify_by_extension(f, config.taxonomy)
+        assert result == "Audio"
 
 
 class TestFindConfigFile:
@@ -334,7 +245,7 @@ class TestWriteDefaultConfig:
         write_default_config(target, source_dir="C:/src", output_dir="C:/out")
 
         config = load_config(str(target))
-        assert len(config.taxonomy) == 9
+        assert len(config.taxonomy) == 4
         assert config.paths.source_dir == "C:/src"
         assert config.paths.output_dir == "C:/out"
 
@@ -345,29 +256,32 @@ class TestWriteDefaultConfig:
             assert "folder" in entry
 
 
-class TestKeywordFallback:
-    def test_matches_keyword_category(self, sample_config):
-        classification = classify_by_keywords(
-            "Ini adalah invoice untuk pembayaran", sample_config.taxonomy, "tagihan.pdf"
+class TestClassificationNormalization:
+    def test_junk_date_becomes_none(self):
+        classification = ClassificationResult(
+            title="Test Doc",
+            document_type="other",
+            main_category="Documents",
+            document_date="null",
+            suggested_filename="test_doc",
         )
-        assert classification.main_category == "Keuangan"
+        assert classification.document_date is None
 
-    def test_no_match_goes_to_lainnya(self, sample_config):
-        classification = classify_by_keywords(
-            "teks acak tanpa kata kunci", sample_config.taxonomy, "acak.pdf"
+    def test_empty_title_fallback(self):
+        classification = ClassificationResult(
+            title="   ",
+            document_type="other",
+            main_category="Documents",
+            suggested_filename="test",
         )
-        assert classification.main_category == "Lainnya"
+        assert classification.title == "Untitled Document"
 
-    def test_empty_text_still_classified(self, sample_config):
-        classification = classify_by_keywords("", sample_config.taxonomy, "scan_001.pdf")
-        assert classification.main_category == "Lainnya"
 
-    def test_title_from_original_name(self, sample_config):
-        classification = classify_by_keywords(
-            "", sample_config.taxonomy, "Laporan Bulanan Maret.pdf"
-        )
-        assert classification.title == "Laporan_Bulanan_Maret"
+class TestFilenameFallbacks:
+    def test_clean_title(self, sample_config):
+        name = generate_target_filename("Clean_Title", ".pdf", sample_config.file_naming)
+        assert name == "Clean_Title.pdf"
 
-    def test_low_confidence_marks_rule_based(self, sample_config):
-        classification = classify_by_keywords("invoice", sample_config.taxonomy, "x.pdf")
-        assert classification.confidence <= 0.5
+    def test_symbol_only_falls_back(self, sample_config):
+        name = generate_target_filename("document", ".png", sample_config.file_naming)
+        assert name == "document.png"

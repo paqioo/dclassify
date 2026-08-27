@@ -4,7 +4,6 @@ import json
 import logging
 import re
 import shutil
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -25,41 +24,21 @@ HISTORY_FILE = ".doc_classifier_history.json"
 GLOBAL_CONFIG_DIR = Path.home() / ".doc-classifier"
 GLOBAL_CONFIG_FILE = GLOBAL_CONFIG_DIR / "config.yaml"
 
+DOCUMENT_EXTENSIONS = {".pdf", ".txt", ".docx", ".doc", ".ppt", ".pptx", ".pot"}
+SPREADSHEET_EXTENSIONS = {".xls", ".xlsx", ".csv", ".tsv", ".ods", ".xlb"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".jpe", ".png", ".bmp", ".tiff", ".gif"}
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".wma", ".ogg", ".au", ".mp2", ".mid", ".ram", ".rm"}
+
 DEFAULT_TAXONOMY: dict[str, dict] = {
-    "Keuangan": {
-        "keywords": ["invoice", "faktur", "kwitansi", "laporan keuangan", "anggaran", "budget"],
-        "folder": "01_Keuangan",
-    },
-    "Surat_Menyurat": {
-        "keywords": ["surat", "memo", "nota dinas", "undangan", "pengumuman"],
-        "folder": "02_Surat_Menyurat",
-    },
-    "Laporan": {
-        "keywords": ["laporan", "report", "evaluasi", "monitoring", "progress"],
-        "folder": "03_Laporan",
-    },
-    "Kontrak": {
-        "keywords": ["kontrak", "perjanjian", "MoU", "agreement", "addendum"],
-        "folder": "04_Kontrak",
-    },
-    "SDM": {
-        "keywords": ["CV", "resume", "SK", "absensi", "cuti", "payroll"],
-        "folder": "05_SDM",
-    },
-    "Penelitian": {
-        "keywords": ["jurnal", "paper", "skripsi", "tesis", "disertasi", "research"],
-        "folder": "06_Penelitian",
-    },
-    "Teknis": {
-        "keywords": ["SOP", "manual", "prosedur", "spesifikasi", "blueprint"],
-        "folder": "07_Teknis",
-    },
-    "Legal": {
-        "keywords": ["hukum", "peraturan", "undang-undang", "regulasi", "legal"],
-        "folder": "08_Legal",
-    },
-    "Lainnya": {"keywords": [], "folder": "09_Lainnya"},
+    "Documents": {"keywords": [], "folder": "Documents"},
+    "Spreadsheets": {"keywords": [], "folder": "Spreadsheets"},
+    "Images": {"keywords": [], "folder": "Images"},
+    "Audio": {"keywords": [], "folder": "Audio"},
 }
+
+URL_PATTERN = re.compile(r"https?://[^\s]+", re.IGNORECASE)
+FONT_NAMES = {"arial", "calibri", "times new roman", "verdana", "tahoma", "century gothic",
+              "garamond", "gill sans", "zapfhumnst", "courier", "helvetica", "symbol"}
 
 
 def find_config_file(
@@ -67,7 +46,6 @@ def find_config_file(
     cwd: Path | None = None,
     home: Path | None = None,
 ) -> Optional[Path]:
-    """Resolve config path: explicit flag -> ./config.yaml -> ~/.doc-classifier/config.yaml."""
     if explicit:
         return Path(explicit)
 
@@ -101,7 +79,6 @@ def write_default_config(
     source_dir: str | None = None,
     output_dir: str | None = None,
 ) -> Path:
-    """Write a complete default config (taxonomy included) to target_path."""
     raw = Config().model_dump()
     raw["taxonomy"] = DEFAULT_TAXONOMY
     if source_dir is not None:
@@ -116,43 +93,85 @@ def write_default_config(
     return path
 
 
-def classify_by_keywords(
-    text: str,
+def classify_by_extension(
+    file_path: str | Path,
     taxonomy: dict[str, TaxonomyEntry],
-    original_name: str = "",
-) -> ClassificationResult:
-    """Rule-based fallback classification using taxonomy keywords (no AI needed)."""
-    lower_text = (text or "").lower()
-    best_category: str | None = None
-    best_hits = 0
+) -> str:
+    ext = Path(file_path).suffix.lower()
 
-    for name, entry in taxonomy.items():
-        hits = sum(1 for kw in entry.keywords if kw and kw.lower() in lower_text)
-        if hits > best_hits:
-            best_hits = hits
-            best_category = name
+    if ext in DOCUMENT_EXTENSIONS:
+        return "Documents"
+    elif ext in SPREADSHEET_EXTENSIONS:
+        return "Spreadsheets"
+    elif ext in IMAGE_EXTENSIONS:
+        return "Images"
+    elif ext in AUDIO_EXTENSIONS:
+        return "Audio"
 
-    if best_category is None:
-        best_category = "Lainnya" if "Lainnya" in taxonomy else next(iter(taxonomy), "Lainnya")
+    for name in taxonomy:
+        return name
+    return "Documents"
 
-    stem = sanitize_filename(Path(original_name).stem, max_length=60)
-    title = stem or "Untitled Document"
 
-    summary = (
-        f"Diklasifikasi via keyword rules ({best_hits} cocok)"
-        if best_hits
-        else "Tanpa kecocokan keyword; dimasukkan ke Lainnya"
-    )
+def _is_boilerplate_line(text: str) -> bool:
+    lower = text.lower()
+    if "online service" in lower and "e-mail" in lower:
+        return True
+    if "http" in lower and ("e-mail" in lower or "email" in lower):
+        return True
+    if "federal register" in lower and "vol" in lower:
+        return True
+    return False
 
-    return ClassificationResult(
-        title=title,
-        document_type="other",
-        main_category=best_category,
-        document_date=None,
-        suggested_filename=stem or "document",
-        confidence=0.3,
-        summary=summary,
-    )
+
+def _is_readable_title(text: str) -> bool:
+    if not text or len(text) < 4:
+        return False
+    url_count = len(URL_PATTERN.findall(text))
+    if url_count > 0:
+        return False
+    non_ascii = sum(1 for c in text if ord(c) > 127)
+    if non_ascii > len(text) * 0.3:
+        return False
+    font_hits = sum(1 for f in FONT_NAMES if f in text.lower())
+    if font_hits > 0:
+        return False
+    alpha = sum(1 for c in text if c.isalpha())
+    if len(text) > 0 and alpha / len(text) < 0.4:
+        return False
+    return True
+
+
+def generate_title_from_text(
+    text: str | None,
+    original_name: str,
+) -> str:
+    stem = Path(original_name).stem
+    clean_stem = sanitize_filename(stem, max_length=120)
+
+    if not text:
+        return clean_stem
+
+    text = URL_PATTERN.sub("", text)
+
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    lines = [line for line in lines if len(line) > 15]
+    lines = [line for line in lines if not _is_boilerplate_line(line)]
+
+    for line in lines:
+        words = line.split()[:8]
+        candidate = " ".join(words)
+        if _is_readable_title(candidate):
+            return sanitize_filename(candidate, max_length=120)
+
+    if lines:
+        longest = max(lines, key=len)
+        words = longest.split()[:8]
+        candidate = " ".join(words)
+        if _is_readable_title(candidate):
+            return sanitize_filename(candidate, max_length=120)
+
+    return clean_stem
 
 
 def save_config_paths(
@@ -180,7 +199,7 @@ def save_config_paths(
     return Config(**raw)
 
 
-def sanitize_filename(name: str, max_length: int = 120) -> str:
+def sanitize_filename(name: str, max_length: int = 255) -> str:
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", name)
     name = re.sub(r"\s+", "_", name.strip())
     name = re.sub(r"_+", "_", name)
@@ -191,23 +210,15 @@ def sanitize_filename(name: str, max_length: int = 120) -> str:
 
 
 def generate_target_filename(
-    classification: ClassificationResult,
+    title: str,
     original_ext: str,
     naming_config: FileNamingConfig,
 ) -> str:
-    date_str = classification.document_date or datetime.now().strftime(naming_config.date_format)
-    title = sanitize_filename(classification.title, max_length=60)
-    if not title or not re.search(r"[a-z0-9]", title, re.IGNORECASE):
-        title = sanitize_filename(classification.suggested_filename, max_length=60)
-    if not title:
-        title = "document"
-    doc_type = sanitize_filename(classification.document_type, max_length=20)
+    safe_title = sanitize_filename(title, max_length=200)
+    if not safe_title or not re.search(r"[a-zA-Z0-9]", safe_title):
+        safe_title = "document"
 
-    filename = naming_config.pattern.format(
-        date=date_str,
-        title=title,
-        type=doc_type,
-    )
+    filename = naming_config.pattern.format(title=safe_title)
 
     if naming_config.sanitize_chars:
         filename = sanitize_filename(filename, max_length=naming_config.max_length)
@@ -216,15 +227,15 @@ def generate_target_filename(
 
 
 def resolve_target_folder(
-    classification: ClassificationResult,
+    category: str,
     taxonomy: dict[str, TaxonomyEntry],
     base_dir: str | Path = ".",
 ) -> Path:
-    category = classification.main_category
     if category in taxonomy:
         folder_name = taxonomy[category].folder
     else:
-        folder_name = taxonomy.get("Lainnya", TaxonomyEntry(folder="09_Lainnya")).folder
+        first_key = next(iter(taxonomy), "Documents")
+        folder_name = taxonomy[first_key].folder
 
     return Path(base_dir) / folder_name
 
@@ -250,8 +261,14 @@ def load_history(history_path: str | Path = HISTORY_FILE) -> list[FileOperation]
     if not path.exists():
         return []
 
-    with open(path, "r", encoding="utf-8") as f:
-        raw_list = json.load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+            if not content:
+                return []
+            raw_list = json.loads(content)
+    except (json.JSONDecodeError, ValueError):
+        return []
 
     return [FileOperation(**entry) for entry in raw_list]
 
@@ -265,7 +282,8 @@ def save_history(operations: list[FileOperation], history_path: str | Path = HIS
 
 def apply_classification(
     file_path: str | Path,
-    classification: ClassificationResult,
+    category: str,
+    title: str,
     config: Config,
     output_dir: str | Path = ".",
     dry_run: bool = False,
@@ -273,13 +291,23 @@ def apply_classification(
     file_path = Path(file_path)
     output_dir = Path(output_dir)
 
-    target_folder = resolve_target_folder(classification, config.taxonomy, output_dir)
+    target_folder = resolve_target_folder(category, config.taxonomy, output_dir)
     new_filename = generate_target_filename(
-        classification, file_path.suffix, config.file_naming
+        title, file_path.suffix, config.file_naming
     )
     target_path = unique_path(target_folder / new_filename)
 
     action = "noop" if dry_run else "move"
+
+    classification = ClassificationResult(
+        title=title,
+        document_type="other",
+        main_category=category,
+        document_date=None,
+        suggested_filename=title,
+        confidence=1.0,
+        summary=f"Filed under {category}",
+    )
 
     operation = FileOperation(
         original_path=str(file_path.resolve()),

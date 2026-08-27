@@ -17,7 +17,7 @@ class ClassificationResult(BaseModel):
             "invoice, resume, research, other"
         ),
     )
-    main_category: str = Field(..., description="Kategori utama sesuai taksonomi config")
+    main_category: str = Field(..., description="Main category matching config taxonomy")
     document_date: Optional[str] = Field(None, description="Tanggal dokumen jika terdeteksi")
     suggested_filename: str = Field(..., description="Nama file yang disarankan")
     confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="Confidence score 0-1")
@@ -47,12 +47,16 @@ class FileOperation(BaseModel):
 
 
 class AppConfig(BaseModel):
-    default_model: str = "ollama/llama3:8b"
+    default_model: str = "ollama/qwen2.5:1.5b"
     max_chars: int = 2000
     temperature: float = 0.1
     fallback_keywords: bool = Field(
         default=True,
         description="Jika AI tidak tersedia, klasifikasi memakai keyword taxonomy",
+    )
+    enable_ai_title: bool = Field(
+        default=True,
+        description="Jika true, generate judul file via AI (tetap keyword-only untuk kategori)",
     )
 
 

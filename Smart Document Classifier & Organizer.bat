@@ -59,7 +59,7 @@ echo - Jika diminta install Ollama / download model, cukup tekan Enter atau Y.
 echo - Progres tidak hilang walau Anda tutup jendela ini.
 echo.
 pause
-"venv\Scripts\dclassify.exe"
+call "venv\Scripts\dclassify.exe"
 
 echo.
 echo ==============================================

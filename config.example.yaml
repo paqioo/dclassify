@@ -1,93 +1,35 @@
-# doc-classifier-cli - contoh konfigurasi.
-# Salin file ini menjadi "config.yaml" di folder proyek lalu sesuaikan,
-# atau biarkan aplikasi membuat config otomatis di ~/.doc-classifier/config.yaml.
+# doc-classifier-cli - example configuration.
+# Copy this file as "config.yaml" in the project folder and adjust,
+# or let the app auto-create config at ~/.doc-classifier/config.yaml.
 
 classification:
-  default_model: ollama/llama3:8b   # model Ollama lokal (privacy-first)
-  max_chars: 2000                   # jumlah karakter awal yang dikirim ke AI
+  default_model: ollama/qwen2.5:1.5b   # local Ollama model (privacy-first)
+  max_chars: 2000                   # initial characters sent to AI
   temperature: 0.1
-  fallback_keywords: true           # jika AI tidak tersedia, pakai keyword taxonomy
+  fallback_keywords: true
 
 paths:
-  # Folder sumber dokumen berantakan (contoh: Downloads).
-  source_dir: C:\Users\NAMA_ANDA\Downloads
-  # Folder tujuan arsip rapi.
-  output_dir: C:\Users\NAMA_ANDA\Documents\ArsipDokumen
+  # Source folder with messy documents (e.g. Downloads).
+  source_dir: C:\Users\YOUR_NAME\Downloads
+  # Target folder for organized archive.
+  output_dir: C:\Users\YOUR_NAME\Documents\OrganizedDocs
 
 taxonomy:
-  Keuangan:
-    keywords:
-    - invoice
-    - faktur
-    - kwitansi
-    - laporan keuangan
-    - anggaran
-    - budget
-    folder: 01_Keuangan
-  Surat_Menyurat:
-    keywords:
-    - surat
-    - memo
-    - nota dinas
-    - undangan
-    - pengumuman
-    folder: 02_Surat_Menyurat
-  Laporan:
-    keywords:
-    - laporan
-    - report
-    - evaluasi
-    - monitoring
-    - progress
-    folder: 03_Laporan
-  Kontrak:
-    keywords:
-    - kontrak
-    - perjanjian
-    - MoU
-    - agreement
-    - addendum
-    folder: 04_Kontrak
-  SDM:
-    keywords:
-    - CV
-    - resume
-    - SK
-    - absensi
-    - cuti
-    - payroll
-    folder: 05_SDM
-  Penelitian:
-    keywords:
-    - jurnal
-    - paper
-    - skripsi
-    - tesis
-    - disertasi
-    - research
-    folder: 06_Penelitian
-  Teknis:
-    keywords:
-    - SOP
-    - manual
-    - prosedur
-    - spesifikasi
-    - blueprint
-    folder: 07_Teknis
-  Legal:
-    keywords:
-    - hukum
-    - peraturan
-    - undang-undang
-    - regulasi
-    - legal
-    folder: 08_Legal
-  Lainnya:
+  Documents:
     keywords: []
-    folder: 09_Lainnya
+    folder: Documents
+  Spreadsheets:
+    keywords: []
+    folder: Spreadsheets
+  Images:
+    keywords: []
+    folder: Images
+  Audio:
+    keywords: []
+    folder: Audio
 
 file_naming:
-  pattern: '{date}_{title}_{type}'
+  pattern: '{title}'
   date_format: '%Y-%m-%d'
-  max_length: 120
+  max_length: 255
   sanitize_chars: true

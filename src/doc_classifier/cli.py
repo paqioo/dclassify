@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import logging
-import subprocess
-import sys
+import shutil
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -14,18 +14,22 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from . import __version__
-from .ai import check_ollama_connection, classify_text
+from .ai import check_ollama_connection
 from .envcheck import ensure_ready, first_run_wizard
-from .parser import extract_text, get_supported_extensions
+from .parser import extract_text_metadata, get_supported_extensions, is_media_file
 from .rules import (
     GLOBAL_CONFIG_FILE,
     apply_classification,
-    classify_by_keywords,
+    classify_by_extension,
     find_config_file,
+    generate_title_from_text,
     load_config,
+    load_history,
     save_config_paths,
+    save_history,
     undo_all,
     undo_last,
+    unique_path,
 )
 
 app = typer.Typer(
@@ -42,6 +46,38 @@ logging.basicConfig(
 )
 
 
+def _track_folder_time(
+    folder_times: dict[str, tuple[float, int]],
+    category: str,
+    start: float,
+) -> None:
+    elapsed = time.time() - start
+    cur_time, cur_count = folder_times.get(category, (0.0, 0))
+    folder_times[category] = (cur_time + elapsed, cur_count + 1)
+
+
+def _show_runtime_summary(
+    folder_times: dict[str, tuple[float, int]],
+    start_time: float,
+) -> None:
+    total_elapsed = time.time() - start_time
+    table = Table(title="Execution Time", show_header=True)
+    table.add_column("Category", style="cyan")
+    table.add_column("Total Time", style="yellow")
+    table.add_column("Files", style="green")
+    table.add_column("Average", style="dim")
+    for cat, (cat_time, count) in sorted(folder_times.items(), key=lambda x: -x[1][0]):
+        avg = cat_time / count if count else 0
+        table.add_row(cat, f"{cat_time:.1f}s", str(count), f"{avg:.1f}s")
+    table.add_row(
+        "[bold]Total[/bold]",
+        f"[bold]{total_elapsed:.1f}s[/bold]",
+        str(sum(c for _, c in folder_times.values())),
+        "",
+    )
+    console.print(table)
+
+
 def _version_callback(value: bool) -> None:
     if value:
         console.print(f"[bold]doc-classifier-cli[/bold] v{__version__}")
@@ -49,7 +85,6 @@ def _version_callback(value: bool) -> None:
 
 
 def _resolve_config_path(explicit: Optional[str] = None) -> Optional[Path]:
-    """Config chain: --config flag -> ./config.yaml -> ~/.doc-classifier/config.yaml."""
     return find_config_file(explicit=explicit)
 
 
@@ -87,23 +122,16 @@ def classify(
     output_dir: Optional[str] = typer.Option(
         None, "--output", "-o", help="Base output directory (default: output_dir from config)"
     ),
-    model: Optional[str] = typer.Option(None, "--model", "-m", help="Override AI model"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Simulate without moving files"),
-    local_only: bool = typer.Option(
-        True, "--local-only/--allow-cloud", help="Block cloud API calls"
-    ),
     recursive: bool = typer.Option(
         False, "--recursive", "-r", help="Process directories recursively"
     ),
 ) -> None:
-    """Classify and organize documents using local AI."""
     exit_code = run_classify(
         path=path,
         config_file=config_file,
         output_dir=output_dir,
-        model=model,
         dry_run=dry_run,
-        local_only=local_only,
         recursive=recursive,
     )
     if exit_code:
@@ -114,39 +142,34 @@ def run_classify(
     path: Optional[str] = None,
     config_file: Optional[str] = None,
     output_dir: Optional[str] = None,
-    model: Optional[str] = None,
     dry_run: bool = False,
-    local_only: bool = True,
     recursive: bool = False,
 ) -> int:
-    """Classify and organize documents using local AI. Returns process exit code."""
     config, resolved_path = _load_resolved_config(config_file)
     if resolved_path is None:
         console.print(
-            "[bold red]Config belum ada.[/bold red] Jalankan [cyan]dclassify[/cyan] "
-            "(tanpa perintah) sekali untuk setup pertama kali."
+            "[bold red]No config found.[/bold red] Run [cyan]dclassify[/cyan] "
+            "(without arguments) to set up for the first time."
         )
         return 1
     if config_file and not Path(config_file).exists():
         console.print(f"[bold red]Error:[/bold red] Config file not found: {config_file}")
         return 1
-    ai_model = model or config.classification.default_model
 
     target_path = path or config.paths.source_dir
     base_output = output_dir or config.paths.output_dir or "."
 
     if target_path is None:
         console.print(
-            "[bold red]Folder sumber belum diatur.[/bold red] Atur via menu opsi [1] "
-            "atau isi 'paths.source_dir' di config.yaml."
+            "[bold red]Source folder not set.[/bold red] Configure via menu option [1] "
+            "or fill 'paths.source_dir' in config.yaml."
         )
         return 1
 
     console.print(
         Panel(
             f"[bold green]doc-classifier-cli[/bold green] v{__version__}\n"
-            f"Model: [cyan]{ai_model}[/cyan] | Dry-run: [yellow]{dry_run}[/yellow] | "
-            f"Local-only: {local_only}\n"
+            f"Mode: [cyan]FILE-TYPE + CONTENT NAMING[/cyan] | Dry-run: [yellow]{dry_run}[/yellow]\n"
             f"Source: [cyan]{target_path}[/cyan] | Output: [cyan]{base_output}[/cyan]",
             title="Document Classifier",
         )
@@ -158,35 +181,50 @@ def run_classify(
         return 1
 
     files: list[Path] = []
+    media_files: list[Path] = []
     supported = get_supported_extensions()
 
     if target.is_file():
-        if target.suffix.lower() in supported:
+        ext = target.suffix.lower()
+        if is_media_file(target):
+            media_files.append(target)
+        elif ext in supported:
             files.append(target)
         else:
             console.print(f"[bold red]Error:[/bold red] Unsupported file type: {target.suffix}")
             return 1
     elif target.is_dir():
         glob_pattern = "**/*" if recursive else "*"
-        files = [
-            f
-            for f in target.glob(glob_pattern)
-            if f.is_file() and f.suffix.lower() in supported
-        ]
+        for f in target.glob(glob_pattern):
+            if not f.is_file():
+                continue
+            ext = f.suffix.lower()
+            if is_media_file(f):
+                media_files.append(f)
+            elif ext in supported:
+                files.append(f)
 
-    if not files:
+    total_files = len(files) + len(media_files)
+    if not files and not media_files:
         console.print("[yellow]No supported files found.[/yellow]")
         return 0
 
-    console.print(f"\nFound [bold]{len(files)}[/bold] file(s) to process.\n")
+    n_text = len(files)
+    n_media = len(media_files)
+    console.print(
+        f"\nFound [bold]{n_text}[/bold] file(s) and "
+        f"[bold]{n_media}[/bold] media file(s) to process.\n"
+    )
 
     results_table = Table(title="Classification Results")
     results_table.add_column("#", style="dim", width=4)
     results_table.add_column("Original File", style="cyan", max_width=30)
     results_table.add_column("Category", style="green")
-    results_table.add_column("Type", style="yellow")
     results_table.add_column("New Name", style="magenta", max_width=40)
     results_table.add_column("Status", style="bold")
+
+    start_time = time.time()
+    folder_times: dict[str, tuple[float, int]] = {}
 
     with Progress(
         SpinnerColumn(),
@@ -195,57 +233,20 @@ def run_classify(
         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
         console=console,
     ) as progress:
-        task = progress.add_task("Processing files...", total=len(files))
+        task = progress.add_task("Processing files...", total=total_files)
 
         for idx, file_path in enumerate(files, 1):
             progress.update(task, description=f"Processing: {file_path.name}")
+            file_start = time.time()
 
-            text = extract_text(file_path)
+            category = classify_by_extension(file_path, config.taxonomy)
 
-            classification = None
-            if text:
-                classification = classify_text(
-                    text,
-                    model=ai_model,
-                    temperature=config.classification.temperature,
-                    local_only=local_only,
-                )
-
-            if not classification and config.classification.fallback_keywords:
-                classification = classify_by_keywords(
-                    text or "", config.taxonomy, original_name=file_path.name
-                )
-                operation = apply_classification(
-                    file_path, classification, config, output_dir=base_output, dry_run=dry_run
-                )
-                keyword_status = (
-                    "[yellow]KEYWORD[/yellow]"
-                    if operation.action == "move"
-                    else "[yellow]DRY-RUN[/yellow]"
-                )
-                results_table.add_row(
-                    str(idx),
-                    file_path.name,
-                    classification.main_category,
-                    "keyword",
-                    Path(operation.target_path).name,
-                    keyword_status,
-                )
-                progress.advance(task)
-                continue
-
-            if not classification:
-                results_table.add_row(
-                    str(idx), file_path.name, "-", "-", "-",
-                    "[red]AI error - jalankan dclassify untuk cek Ollama[/red]",
-                )
-                progress.advance(task)
-                continue
+            title_meta, text = extract_text_metadata(file_path)
+            title = title_meta or generate_title_from_text(text, file_path.name)
 
             operation = apply_classification(
-                file_path, classification, config, output_dir=base_output, dry_run=dry_run
+                file_path, category, title, config, output_dir=base_output, dry_run=dry_run
             )
-
             status = (
                 "[green]OK[/green]"
                 if operation.action == "move"
@@ -254,29 +255,170 @@ def run_classify(
             results_table.add_row(
                 str(idx),
                 file_path.name,
-                classification.main_category,
-                classification.document_type,
+                category,
                 Path(operation.target_path).name,
                 status,
             )
             progress.advance(task)
+            _track_folder_time(folder_times, category, file_start)
+
+        for idx, media_path in enumerate(media_files, len(files) + 1):
+            progress.update(task, description=f"Media: {media_path.name}")
+            file_start = time.time()
+            progress.advance(task)
+
+            media_folder = Path(base_output) / "Audio"
+            target_name = media_path.name
+            media_target = unique_path(media_folder / target_name)
+
+            if not dry_run:
+                media_folder.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(media_path), str(media_target))
+                from .models import FileOperation
+                operation = FileOperation(
+                    original_path=str(media_path.resolve()),
+                    target_path=str(media_target.resolve()),
+                    action="move",
+                )
+                history = load_history()
+                history.append(operation)
+                save_history(history)
+
+            status = "[blue]MOVED[/blue]" if not dry_run else "[yellow]DRY-RUN[/yellow]"
+            results_table.add_row(
+                str(idx),
+                media_path.name,
+                "Audio",
+                media_target.name,
+                status,
+            )
+            _track_folder_time(folder_times, "Audio", file_start)
 
     console.print()
     console.print(results_table)
 
     if dry_run:
-        console.print("\n[yellow]Dry-run mode — no files were moved.[/yellow]")
+        console.print("\n[yellow]Dry-run mode - no files were moved.[/yellow]")
     else:
         console.print("\n[bold green]Done![/bold green] Files have been organized.")
 
+    _show_runtime_summary(folder_times, start_time)
+
     return 0
+
+
+@app.command()
+def scan(
+    path: Optional[str] = typer.Argument(
+        None, help="Directory path to scan (default: source_dir from config)"
+    ),
+    config_file: Optional[str] = typer.Option(
+        None, "--config", "-c", help="Config YAML path (default: auto-detect)"
+    ),
+    recursive: bool = typer.Option(
+        True, "--recursive/--no-recursive", help="Scan directories recursively"
+    ),
+    output_report: Optional[str] = typer.Option(
+        None, "--output-report", "-o", help="Export report to JSON file path"
+    ),
+    output_csv: Optional[str] = typer.Option(
+        None, "--output-csv", help="Export report to CSV file path"
+    ),
+) -> None:
+    """Scan and analyze a dataset without moving files."""
+    config, resolved_path = _load_resolved_config(config_file)
+    if resolved_path is None:
+        console.print(
+            "[bold red]No config found.[/bold red] Run [cyan]dclassify[/cyan] "
+            "(without arguments) to set up for the first time."
+        )
+        raise typer.Exit(1)
+
+    target_path = path or config.paths.source_dir
+    if target_path is None:
+        console.print("[bold red]Source folder not set.[/bold red]")
+        raise typer.Exit(1)
+
+    target = Path(target_path)
+    if not target.exists():
+        console.print(f"[bold red]Error:[/bold red] Path not found: {target_path}")
+        raise typer.Exit(1)
+
+    console.print(
+        Panel(
+            f"[bold green]Document Scanner[/bold green] v{__version__}\n"
+            f"Path: [cyan]{target}[/cyan]",
+            title="Dataset Scanner",
+        )
+    )
+
+    with console.status("[bold green]Scanning dataset..."):
+        from .scanner import scan_directory
+        scan_start = time.time()
+        report = scan_directory(
+            path=target,
+            config=config,
+            recursive=recursive,
+        )
+        scan_elapsed = time.time() - scan_start
+
+    s = report.stats
+    table = Table(title="Scan Summary", show_header=True)
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green")
+
+    table.add_row("Total files", str(s.total_files))
+    table.add_row("Supported (attempted)", str(s.supported_files + s.media_files))
+    table.add_row("Classified successfully", str(s.classified_files))
+    table.add_row("Media files (skipped)", str(s.media_files))
+    table.add_row("Execution time", f"{scan_elapsed:.1f}s")
+    console.print(table)
+
+    if s.by_category:
+        cat_table = Table(title="Category Distribution")
+        cat_table.add_column("Category", style="cyan")
+        cat_table.add_column("Count", style="green")
+        cat_table.add_column("Percentage", style="yellow")
+        cat_table.add_column("Time", style="dim")
+        for cat, count in sorted(s.by_category.items(), key=lambda x: -x[1]):
+            pct = count * 100 / s.classified_files if s.classified_files else 0
+            cat_time = s.by_category_time.get(cat, 0)
+            cat_table.add_row(
+                cat, str(count), f"{pct:.1f}%",
+                f"{cat_time:.1f}s" if cat_time else "-",
+            )
+        console.print(cat_table)
+
+    if s.by_extension:
+        ext_table = Table(title="Extension Distribution")
+        ext_table.add_column("Extension", style="cyan")
+        ext_table.add_column("Count", style="green")
+        for ext, count in sorted(s.by_extension.items(), key=lambda x: -x[1])[:10]:
+            ext_table.add_row(ext, str(count))
+        console.print(ext_table)
+
+    if output_report:
+        from .scanner import write_report_json
+        out_path = Path(output_report)
+        write_report_json(report, out_path)
+        console.print(f"[green]Report saved to:[/green] {out_path}")
+
+    if output_csv:
+        from .scanner import write_report_csv
+        out_path = Path(output_csv)
+        write_report_csv(report, out_path)
+        console.print(f"[green]CSV saved to:[/green] {out_path}")
+
+    console.print(
+        f"\n[bold green]Scan complete![/bold green] "
+        f"({s.classified_files}/{s.supported_files} files classified)"
+    )
 
 
 @app.command()
 def undo(
     all_ops: bool = typer.Option(False, "--all", help="Undo all recorded operations"),
 ) -> None:
-    """Undo the last (or all) file operations."""
     _undo(all_ops)
 
 
@@ -320,7 +462,6 @@ def _check_connection() -> int:
 
 @app.command()
 def menu() -> None:
-    """Open the interactive main menu."""
     _menu_loop()
 
 
@@ -344,12 +485,11 @@ def _menu_loop() -> None:
         console.print("[bold]Choose an option:[/bold]")
         console.print("  [cyan][1][/cyan] Configure source & target folders")
         console.print("  [cyan][2][/cyan] Check AI connection (Ollama)")
-        console.print("  [cyan][3][/cyan] Run document cleanup")
+        console.print("  [cyan][3][/cyan] Run document cleanup (file-type + naming)")
         console.print("  [cyan][4][/cyan] Undo last operation")
-        console.print("  [cyan][5][/cyan] Open Web UI")
         console.print("  [cyan][0][/cyan] Exit")
 
-        choice = Prompt.ask("Choose", choices=["0", "1", "2", "3", "4", "5"], default="0")
+        choice = Prompt.ask("Choose", choices=["0", "1", "2", "3", "4"], default="3")
 
         if choice == "1":
             _menu_configure_paths()
@@ -359,8 +499,6 @@ def _menu_loop() -> None:
             _menu_run_classify()
         elif choice == "4":
             _menu_undo()
-        elif choice == "5":
-            _menu_web_ui()
         else:
             console.print("[green]Goodbye![/green]")
             break
@@ -383,8 +521,7 @@ def _menu_configure_paths() -> None:
 
 
 def _menu_run_classify() -> None:
-    dry_run = Confirm.ask("Dry-run (simulate only, no files moved)?", default=False)
-    code = run_classify(dry_run=dry_run)
+    code = run_classify(dry_run=False)
     if code:
         console.print("[red]Cleanup failed. See error above.[/red]")
 
@@ -392,18 +529,6 @@ def _menu_run_classify() -> None:
 def _menu_undo() -> None:
     all_ops = Confirm.ask("Undo ALL operations instead of only the last one?", default=False)
     _undo(all_ops)
-
-
-def _menu_web_ui() -> None:
-    web_path = Path(__file__).resolve().parent / "web.py"
-    console.print(f"Launching Web UI: [cyan]{web_path}[/cyan]")
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "streamlit", "run", str(web_path)],
-            check=False,
-        )
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Web UI closed.[/yellow]")
 
 
 if __name__ == "__main__":

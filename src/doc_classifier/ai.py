@@ -22,8 +22,8 @@ SYSTEM_PROMPT = (
     '  "title": "Main topic or title of the document",\n'
     '  "document_type": "One of: report, article, letter, contract, invoice, '
     'resume, research, manual, other",\n'
-    '  "main_category": "One of: Keuangan, Surat_Menyurat, Laporan, Kontrak, SDM, '
-    'Penelitian, Teknis, Legal, Lainnya",\n'
+    '  "main_category": "One of: Financial, Correspondence, Reports, Contracts, HR, '
+    'Research, Technical, Legal, Other_Documents",\n'
     '  "document_date": "Extracted date in YYYY-MM-DD format if found, otherwise null",\n'
     '  "suggested_filename": "A clean descriptive filename without extension, use '
     'underscores for spaces",\n'
@@ -41,7 +41,7 @@ SYSTEM_PROMPT = (
 
 def classify_text(
     text: str,
-    model: str = "ollama/llama3:8b",
+    model: str = "ollama/qwen2.5:1.5b",
     temperature: float = 0.1,
     local_only: bool = True,
 ) -> Optional[ClassificationResult]:
@@ -89,7 +89,30 @@ def classify_text(
         return None
 
 
-def check_ollama_connection(model: str = "ollama/llama3:8b") -> bool:
+def generate_title_ai(text: str, model: str = "ollama/qwen2.5:1.5b") -> Optional[str]:
+    try:
+        prompt = (
+            "Baca teks dokumen berikut. Berikan judul singkat (maksimal 8 kata) "
+            "dalam Bahasa Indonesia yang menggambarkan isi dokumen ini. "
+            "Hanya balas dengan judul, tanpa tanda kutip, tanpa penjelasan lain.\n\n"
+            f"Teks:\n{text[:1500]}"
+        )
+        response = litellm.completion(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=50,
+        )
+        raw = response.choices[0].message.content.strip().strip("\"'")
+        if raw and len(raw) > 3:
+            return raw
+        return None
+    except Exception as exc:
+        logger.warning("generate_title_ai failed: %s", exc)
+        return None
+
+
+def check_ollama_connection(model: str = "ollama/qwen2.5:1.5b") -> bool:
     try:
         response = litellm.completion(
             model=model,

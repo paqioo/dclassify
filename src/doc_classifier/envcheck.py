@@ -1,9 +1,9 @@
 """Environment health-check and first-run guided setup.
 
-Prinsip anti-hilang arah:
-- APA PUN kondisi sistem, user selalu diberi SATU langkah berikutnya yang jelas.
-- Tidak ada download diam-diam; semua aksi berat selalu dikonfirmasi [Y/n] dulu.
-- Setup bisa terputus kapan pun; menjalankan ulang akan resume dari posisi terakhir.
+Anti-loss principle:
+- Regardless of system state, user always gets ONE clear next step.
+- No silent downloads; all heavy actions require [Y/n] confirmation.
+- Setup can be interrupted at any time; re-running resumes from last position.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from rich.console import Console
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
-from .parser import _configure_tesseract
 from .rules import GLOBAL_CONFIG_FILE, load_config, write_default_config
 
 logger = logging.getLogger(__name__)
@@ -32,75 +31,83 @@ TESSERACT_DOWNLOAD_URL = "https://github.com/UB-Mannheim/tesseract/wiki"
 
 @dataclass
 class EnvStatus:
-    ollama_running: bool
-    model_installed: bool
-    tesseract_found: bool
-    model_name: str
+    ollama_running: bool = False
+    model_installed: bool = False
+    model_name: str = ""
+    tesseract_found: bool = False
 
     @property
     def all_critical_ok(self) -> bool:
         return self.ollama_running and self.model_installed
 
 
-def _strip_ollama_prefix(model: str) -> str:
-    return model.split("/", 1)[1] if model.startswith("ollama/") else model
-
-
-def _query_ollama_models() -> list[str]:
-    """Return list of installed model names, or [] if Ollama unreachable."""
+def check_ollama_api() -> bool:
     try:
-        with urllib.request.urlopen(f"{OLLAMA_API}/api/tags", timeout=3) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        return [m.get("name", "") for m in data.get("models", [])]
-    except Exception:
-        return []
-
-
-def check_environment(model: str) -> EnvStatus:
-    """Lightweight check: Ollama API reachability, model presence, tesseract.exe."""
-    models = _query_ollama_models()
-    wanted = _strip_ollama_prefix(model)
-    model_installed = any(m == wanted or m.split(":")[0] == wanted.split(":")[0] for m in models)
-
-    return EnvStatus(
-        ollama_running=bool(models) or _ping_ollama_root(),
-        model_installed=model_installed,
-        tesseract_found=_configure_tesseract(),
-        model_name=model,
-    )
-
-
-def _ping_ollama_root() -> bool:
-    try:
-        with urllib.request.urlopen(f"{OLLAMA_API}/api/version", timeout=3):
+        req = urllib.request.Request(f"{OLLAMA_API}/api/tags", method="GET")
+        with urllib.request.urlopen(req, timeout=5) as _resp:
             return True
     except Exception:
         return False
 
 
+def check_model_installed(model: str) -> bool:
+    """Check if a specific model is installed in Ollama."""
+    bare = _strip_ollama_prefix(model)
+    try:
+        req = urllib.request.Request(f"{OLLAMA_API}/api/tags", method="GET")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        for m in data.get("models", []):
+            if m.get("name", "").startswith(bare):
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def check_tesseract() -> bool:
+    return shutil.which("tesseract") is not None
+
+
+def check_environment(model: str) -> EnvStatus:
+    ollama_ok = check_ollama_api()
+    model_ok = check_model_installed(model) if ollama_ok else False
+    tesseract_ok = check_tesseract()
+    return EnvStatus(
+        ollama_running=ollama_ok,
+        model_installed=model_ok,
+        model_name=model,
+        tesseract_found=tesseract_ok,
+    )
+
+
 def render_status(console: Console, status: EnvStatus) -> None:
-    table = Table(title="Pemeriksaan Lingkungan", show_header=False)
-    table.add_column("Komponen", style="bold", width=18)
+    table = Table(title="Environment Check", show_header=False)
+    table.add_column("Component", style="bold", width=18)
     table.add_column("Status")
 
     table.add_row(
         "Ollama",
-        "[green]Berjalan[/green]"
+        "[green]Running[/green]"
         if status.ollama_running
-        else "[red]Tidak berjalan / belum terinstall[/red]",
+        else "[red]Not running / not installed[/red]",
     )
     if status.ollama_running:
         table.add_row(
             f"Model {status.model_name}",
-            "[green]Siap[/green]" if status.model_installed else "[red]Belum terpasang[/red]",
+            "[green]Ready[/green]" if status.model_installed else "[red]Not installed[/red]",
         )
     table.add_row(
         "Tesseract OCR",
-        "[green]Terdeteksi[/green]"
+        "[green]Detected[/green]"
         if status.tesseract_found
-        else "[yellow]Tidak ditemukan (opsional, untuk file scan/gambar)[/yellow]",
+        else "[yellow]Not found (optional, for scanned images)[/yellow]",
     )
     console.print(table)
+
+
+def _strip_ollama_prefix(model: str) -> str:
+    return model.removeprefix("ollama/").removeprefix("ollama:")
 
 
 def _offer_winget_ollama_install(console: Console) -> bool:
@@ -108,13 +115,13 @@ def _offer_winget_ollama_install(console: Console) -> bool:
     if not shutil.which("winget"):
         return False
 
-    console.print("\n[bold]Ollama belum terinstall di sistem ini.[/bold]")
+    console.print("\n[bold]Ollama is not installed on this system.[/bold]")
     if not Confirm.ask(
-        "Install Ollama otomatis via winget sekarang? (±700 MB)", default=True
+        "Install Ollama automatically via winget now? (±700 MB)", default=True
     ):
         return False
 
-    console.print("[cyan]Menjalankan winget install Ollama.Ollama ...[/cyan]")
+    console.print("[cyan]Running winget install Ollama.Ollama ...[/cyan]")
     try:
         result = subprocess.run(
             [
@@ -129,61 +136,62 @@ def _offer_winget_ollama_install(console: Console) -> bool:
             check=False,
         )
         if result.returncode == 0:
-            console.print("[green]Instalasi winget selesai.[/green]")
+            console.print("[green]Winget install complete.[/green]")
             return True
-        console.print(f"[yellow]winget keluar dengan kode {result.returncode}.[/yellow]")
+        console.print(f"[yellow]winget exited with code {result.returncode}.[/yellow]")
     except Exception as exc:
         logger.warning("winget invocation failed: %s", exc)
-        console.print(f"[yellow]Gagal memanggil winget: {exc}[/yellow]")
+        console.print(f"[yellow]Failed to invoke winget: {exc}[/yellow]")
     return False
 
 
 def _guide_manual_ollama(console: Console) -> None:
-    console.print("\n[bold]Panduan pemasangan manual Ollama:[/bold]")
-    console.print(f"  1. Buka halaman download : {OLLAMA_DOWNLOAD_URL}")
-    console.print("  2. Install seperti aplikasi Windows biasa")
-    console.print("  3. Kembali ke sini lalu pilih cek ulang")
+    console.print("\n[bold]Manual Ollama installation guide:[/bold]")
+    console.print(f"  1. Open download page: {OLLAMA_DOWNLOAD_URL}")
+    console.print("  2. Install like a normal Windows application")
+    console.print("  3. Come back here and re-check")
     try:
         webbrowser.open(OLLAMA_DOWNLOAD_URL)
-        console.print("[dim](Halaman download dibuka otomatis di browser)[/dim]")
+        console.print("[dim](Download page opened in browser)[/dim]")
     except Exception:
         pass
 
 
 def _offer_model_pull(console: Console, status: EnvStatus) -> None:
     bare_model = _strip_ollama_prefix(status.model_name)
-    console.print(f"\n[bold]Model [cyan]{bare_model}[/cyan] belum terpasang.[/bold]")
-    if not Confirm.ask(f"Download model sekarang? ({bare_model} ±4.7 GB)", default=True):
+    model_size = "±1 GB" if "1.5b" in bare_model.lower() else "±4.7 GB"
+    console.print(f"\n[bold]Model [cyan]{bare_model}[/cyan] is not installed yet.[/bold]")
+    if not Confirm.ask(f"Download model now? ({bare_model} {model_size})", default=True):
         console.print(
-            "[yellow]Lewati. Jalankan manual kapan saja:[/yellow] "
+            "[yellow]Skipped. Run manually anytime:[/yellow] "
             f"[cyan]ollama pull {bare_model}[/cyan]"
         )
         return
 
-    console.print(f"[cyan]Menjalankan: ollama pull {bare_model} ...[/cyan]")
+    console.print(f"[cyan]Running: ollama pull {bare_model} ...[/cyan]")
     try:
         subprocess.run(["ollama", "pull", bare_model], check=False)
     except FileNotFoundError:
-        console.print("[red]Perintah 'ollama' tidak ditemukan di PATH.[/red]")
+        console.print("[red]Command 'ollama' not found in PATH.[/red]")
         return
-    console.print("[green]Selesai. Model siap digunakan.[/green]")
+    console.print("[green]Done. Model is ready to use.[/green]")
 
 
 def _guide_tesseract(console: Console) -> None:
-    console.print("\n[yellow]Tesseract OCR tidak ditemukan (opsional).[/yellow]")
+    console.print("\n[yellow]Tesseract OCR not found (optional).[/yellow]")
     console.print(
-        "Tanpa ini, file hasil scan/gambar (.jpg/.png/pdf scan) tidak bisa dibaca teksnya."
+        "Without it, scanned images (.jpg/.png/pdf scan) cannot be read for text."
     )
-    if Confirm.ask("Buka halaman download Tesseract OCR?", default=False):
+    if Confirm.ask("Open Tesseract OCR download page?", default=False):
         try:
             webbrowser.open(TESSERACT_DOWNLOAD_URL)
-            console.print("[dim](Dibuka di browser)[/dim]")
+            console.print("[dim](Opened in browser)[/dim]")
         except Exception:
             pass
 
 
 def run_guided_setup(console: Console, model: str) -> EnvStatus:
-    """Interactive anti-lost loop until critical components are OK or user gives up."""
+    """Interactive anti-loss loop until critical components are OK or user gives up."""
     while True:
         status = check_environment(model)
         render_status(console, status)
@@ -204,12 +212,12 @@ def run_guided_setup(console: Console, model: str) -> EnvStatus:
             action_taken = True
 
         choice = Prompt.ask(
-            "\n[Enter] Cek ulang / [s] Selesaikan nanti", choices=["", "s"], default=""
+            "\n[Enter] Re-check / [s] Skip for now", choices=["", "s"], default=""
         )
         if choice == "s":
             console.print(
-                "\n[yellow]Setup ditunda. Jalankan lagi[/yellow] [cyan]dclassify[/cyan]"
-                "[yellow] kapan pun untuk melanjutkan — progres tidak hilang.[/yellow]"
+                "\n[yellow]Setup deferred. Run[/yellow] [cyan]dclassify[/cyan]"
+                "[yellow] anytime to continue — progress is saved.[/yellow]"
             )
             return status
 
@@ -221,8 +229,8 @@ def ensure_ready(console: Console, model: str) -> EnvStatus:
     if status.all_critical_ok:
         if not status.tesseract_found:
             console.print(
-                "[yellow]Catatan: Tesseract OCR belum ada - "
-                "file scan/gambar akan dilewati.[/yellow]"
+                "[yellow]Note: Tesseract OCR not found - "
+                "scanned images will be skipped.[/yellow]"
             )
         return status
     return run_guided_setup(console, model)
@@ -239,13 +247,13 @@ def first_run_wizard(console: Console, home_dir=None) -> object:
     default_source = str(base_home / "Downloads")
     default_output = str(Path.home() / "Documents" / "ArsipDokumen")
 
-    console.print("\n[bold cyan]Setup pertama kali terdeteksi.[/bold cyan]")
-    console.print("Kita hanya perlu tahu dua folder ini:\n")
+    console.print("\n[bold cyan]First-time setup detected.[/bold cyan]")
+    console.print("We just need two folder paths:\n")
 
-    source = Prompt.ask("Folder SUMBER dokumen yang mau dirapikan", default=default_source)
-    output = Prompt.ask("Folder TUJUAN arsip rapi", default=default_output)
+    source = Prompt.ask("SOURCE folder (documents to organize)", default=default_source)
+    output = Prompt.ask("TARGET folder (organized archive)", default=default_output)
 
     config_path = write_default_config(GLOBAL_CONFIG_FILE, source_dir=source, output_dir=output)
-    console.print(f"\n[green]Config disimpan ke:[/green] {config_path}")
+    console.print(f"\n[green]Config saved to:[/green] {config_path}")
 
     return load_config(str(config_path))
