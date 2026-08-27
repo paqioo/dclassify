@@ -42,9 +42,6 @@ without your confirmation.
 1. Download & extract this repository
 2. Double-click **`dclassify.bat`** (one time only) - sets up Python env,
    installs dependencies, then launches the guided setup
-3. Daily use:
-   - **`Rapikan_Downloads.bat`** - auto-organize your source folder
-   - **`Jalankan_Web_UI.bat`** - open the Web UI in browser
 
 ## Quick Start
 
